@@ -4,11 +4,88 @@ from Crypto.Util.Padding import unpad
 from base64 import b64decode
 import lzma
 import os
-from zipfile import ZipFile
+import zipfile
+import argparse
+import glob
+import requests
+import shutil
+import subprocess
 
 class FileDecryptor:
-    def __init__(self, data_path):
-        self.data_path = data_path
+    def __init__(self, output_path):
+        self.output_path = output_path
+        self.decompiler_path = '.\\luajit-decompiler-v2.exe'
+        self.decompiled_output_directory = '.\\decompiled'
+        self.decompiler_present()
+
+    def decompiler_present(self):
+        if not os.path.isfile(self.decompiler_path):
+            print(f"{self.decompiler_path} not found.")
+            print(f"https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Dec_16_2023/luajit-decompiler-v2.exe")
+            choice = input("Do you want to download the decompiler? [Y/N]: ")
+            if choice.lower() == 'y':
+                print("Downloading...")
+                url = 'https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Dec_16_2023/luajit-decompiler-v2.exe'
+                try:
+                    response = requests.get(url)
+                    response.raise_for_status()
+                    with open(self.decompiler_path, 'wb') as f:
+                        f.write(response.content)
+                    print(f"Downloaded {self.decompiler_path}")
+                except requests.exceptions.RequestException as e:
+                    print(f"Failed to download {self.decompiler_path}: {e}")
+                    exit(1)
+            else:
+                print("Decompiler is not present. Exiting.")
+                exit(1)
+                
+    def find_data_bin(self):
+        script_directory = os.getcwd()
+        data_bin_path = os.path.join(script_directory, 'data.bin')
+        if not os.path.isfile(data_bin_path):
+            user_paths = glob.glob(r'C:\Users\*\AppData\Roaming\Ravendawn\ravendawn')
+            for user_path in user_paths:
+                possible_path = os.path.join(user_path, 'data.bin')
+                if os.path.isfile(possible_path):
+                    print(f"Found data.bin at {possible_path}")
+                    choice = input("Do you want to use this file? [Y/N]: ")
+                    if choice.lower() == 'y':
+                        shutil.copy(possible_path, data_bin_path)
+                        print(f"Copied data.bin to {script_directory}")
+                        return data_bin_path
+            print("data.bin not found in expected locations. Exiting.")
+            exit(1)
+        else:
+            choice = input("Found data.bin in the script directory, do you want to use this file? [Y/N]: ")
+            if choice.lower() == 'y':
+                return data_bin_path
+            else:
+                user_paths = glob.glob(r'C:\Users\*\AppData\Roaming\Ravendawn\ravendawn')
+                for user_path in user_paths:
+                    possible_path = os.path.join(user_path, 'data.bin')
+                    if os.path.isfile(possible_path):
+                        print(f"Found data.bin at {possible_path}")
+                        choice = input("Do you want to use this file? [Y/N]: ")
+                        if choice.lower() == 'n':
+                            print(f"No data.bin provided.  Provide the data.bin or use one found to continue.")
+                            exit(1)    
+                        choice = input("This may overwrite your existing data.bin in your script directory are you sure? [Y/N]: ")
+                        if choice.lower() == 'y':
+                            shutil.copy(possible_path, data_bin_path)
+                            print(f"Copied data.bin to {script_directory}")
+                            return data_bin_path
+                print("data.bin not found in expected locations or protected. Exiting.")
+                exit(1)
+
+    def extract_data_bin(self, data_bin_path):
+        if not os.path.exists(self.output_path):
+            os.makedirs(self.output_path)
+        
+        with zipfile.ZipFile(data_bin_path, 'r') as zip_ref:
+            print(f"Extracting {data_bin_path} to {self.output_path}...")
+            zip_ref.extractall(self.output_path)
+            print("Extraction complete.")
+
 
     def evp_decrypt(self, key, ciphertext, iv):
         cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -169,24 +246,101 @@ class FileDecryptor:
     def decrypt_file(self, file_path):
         file_name = os.path.basename(file_path)
 
-        with open(file_path, 'rb') as encrypted_file:
-            if encrypted_file.read(4) != b'P00P':
-                print("Not poop, skipping: " + file_path)
-                return
-            encrypted_file.seek(0)
-            xor_key2 = self.get_xor_key(bytearray(encrypted_file.read()))
-            key = self.get_key(self.get_xor_file(file_name), xor_key2)
-            iv = self.get_iv(file_name, xor_key2)
+        try:
+            with open(file_path, 'rb') as encrypted_file:
+                if encrypted_file.read(4) != b'P00P':
+                    print(f"File format not recognized, skipping: {file_path}")
+                    return
+                encrypted_file.seek(0)
+                xor_key2 = self.get_xor_key(bytearray(encrypted_file.read()))
+                key = self.get_key(self.get_xor_file(file_name), xor_key2)
+                iv = self.get_iv(file_name, xor_key2)
 
-        with open(file_path, 'rb') as file:
-            file.read(16)
-            decompressed = lzma.decompress(self.evp_decrypt(key[:32], file.read(), iv))
+            with open(file_path, 'rb') as file:
+                file.read(16)
+                encrypted_content = file.read()
+                decrypted = self.evp_decrypt(key[:32], encrypted_content, iv)
+                decompressed = lzma.decompress(decrypted)
 
-        with open(file_path, 'wb') as new:
-            new.write(decompressed)
+            with open(file_path, 'wb') as new_file:
+                new_file.write(decompressed)
+
+        except Exception as e:
+            print(f"Failed to decrypt {file_path}: {e}")
 
     def decrypt_all_files(self):
-        for root, _, files in os.walk(self.data_path):
+        decrypted_files = []
+        failed_files = []
+        for root, _, files in os.walk(self.output_path):
             for file_name in files:
                 file_path = os.path.join(root, file_name)
-                self.decrypt_file(file_path)
+                try:
+                    print(f"Decrypting... {file_path}")
+                    self.decrypt_file(file_path)
+                    decrypted_files.append(file_path)
+                except Exception as e:
+                    print(f"Failed to decrypt {file_path}: {e}")
+                    failed_files.append(file_path)
+        return decrypted_files, failed_files
+
+    def is_luajit_file(self, file_path):
+        try:
+            with open(file_path, 'rb') as file:
+                # Read only the first 4 bytes for the signature
+                signature = file.read(4)
+            # Compare the read signature to the expected LuaJIT signature
+            return signature == b'\x1B\x4C\x4A\x02'
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            return False
+
+    def decompile_lua_file(self, file_path, temp_decompiled_dir, overwrite=False, backup=False, extension=".decompiled"):
+        temp_decompiled_file = os.path.join(temp_decompiled_dir, os.path.basename(file_path))
+        cmd = [self.decompiler_path, file_path, '-o', temp_decompiled_dir]
+        result = subprocess.run(cmd, check=False)
+        if result.returncode != 0:
+            print(f"Decompiler failed with return code {result.returncode}. Exiting.")
+            exit(1)
+
+        if not os.path.exists(temp_decompiled_file):
+            print(f"Expected decompiled file not found: {temp_decompiled_file}")
+            return
+
+        final_decompiled_file_path = file_path if overwrite else file_path + extension
+
+        if overwrite and os.path.exists(final_decompiled_file_path):
+            if backup:
+                backup_file_path = file_path + ".backup"
+                os.rename(final_decompiled_file_path, backup_file_path)
+                print(f"Backed up existing decompiled file: {backup_file_path}")
+            shutil.move(temp_decompiled_file, final_decompiled_file_path)
+            print(f"Moved decompiled file from {temp_decompiled_file} to {final_decompiled_file_path}")
+        elif not os.path.exists(final_decompiled_file_path):
+            shutil.move(temp_decompiled_file, final_decompiled_file_path)
+            print(f"Moved decompiled file from {temp_decompiled_file} to {final_decompiled_file_path}")
+        else:
+            print(f"File already exists and overwrite is not allowed: {final_decompiled_file_path}")
+
+    def decompile_all_lua_files(self, files, overwrite=False, backup=False, extension=".decompiled"):
+        temp_decompiled_dir = os.path.join(self.output_path, 'temp_decompiled')
+        os.makedirs(temp_decompiled_dir, exist_ok=True)
+
+        for file_path in files:
+            if not file_path.lower().endswith('.lua'):
+                continue
+            if self.is_luajit_file(file_path):
+                self.decompile_lua_file(file_path, temp_decompiled_dir, overwrite, backup, extension)
+            else:
+                print(f"Skipped non-LuaJIT file: {file_path}")
+        shutil.rmtree(temp_decompiled_dir)
+
+
+
+    def cleanup_temporary_files(self):
+        temp_decompiled_dir = os.path.join(self.output_path, 'temp_decompiled')
+        if os.path.exists(temp_decompiled_dir):
+            shutil.rmtree(temp_decompiled_dir)
+            print(f"Cleaned up temporary directory: {temp_decompiled_dir}")
+
+
+

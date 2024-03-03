@@ -21,11 +21,11 @@ class FileDecryptor:
     def decompiler_present(self):
         if not os.path.isfile(self.decompiler_path):
             print(f"{self.decompiler_path} not found.")
-            print(f"https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Dec_16_2023/luajit-decompiler-v2.exe")
+            print(f"https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Feb_25_2024/luajit-decompiler-v2.exe")
             choice = input("Do you want to download the decompiler? [Y/N]: ")
             if choice.lower() == 'y':
                 print("Downloading...")
-                url = 'https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Dec_16_2023/luajit-decompiler-v2.exe'
+                url = 'https://github.com/marsinator358/luajit-decompiler-v2/releases/download/Feb_25_2024/luajit-decompiler-v2.exe'
                 try:
                     response = requests.get(url)
                     response.raise_for_status()
